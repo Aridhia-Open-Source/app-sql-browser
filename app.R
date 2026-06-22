@@ -3635,6 +3635,102 @@ server <- function(input, output, session) {
       })
     })
   })
+  
+  # ── SCHEMA EXPLORER ───────────────────────────────────────────────────────────
+
+  # Renders the Schema Explorer tab: a join map of detected table relationships
+  # followed by a per-table column listing. Common key fields (shared by 2+
+  # tables) are badged. All data comes from schema_links_rv(), already computed
+  # by analyse_schema_links() when the schema was selected - no new queries.
+  output$explorer_ui <- renderUI({
+    sch   <- selected_schema()
+    links <- schema_links_rv()
+
+    if (is.null(sch) || !nzchar(sch))
+      return(div(class = "empty-state",
+                 div(class = "empty-icon", "🗂"),
+                 h4("Select a schema"),
+                 p(style = "color:#8BA3B5;",
+                   "Choose a schema in the sidebar to explore its tables, columns and join keys.")))
+
+    if (is.null(links))
+      return(div(class = "empty-state",
+                 div(class = "empty-icon", "⏳"),
+                 h4("Analysing schema"),
+                 p(style = "color:#8BA3B5;", "Schema link analysis is still running.")))
+
+    all_cols <- links$all_cols
+    common   <- links$common %||% character(0)
+    pairs    <- links$pairs
+    tbls     <- names(all_cols)
+
+    if (length(tbls) == 0)
+      return(div(class = "empty-state",
+                 div(class = "empty-icon", "🗂"),
+                 h4("No tables"),
+                 p(style = "color:#8BA3B5;", "This schema contains no base tables.")))
+
+    # ── Join map ──────────────────────────────────────────────────────────────
+    joinmap <- if (!is.null(pairs) && nrow(pairs) > 0) {
+      jrows <- lapply(seq_len(nrow(pairs)), function(i) {
+        div(class = "se-jrow",
+            span(class = "tname", pairs$table_a[i]),
+            span(class = "sep", "↔"),
+            span(class = "tname", pairs$table_b[i]),
+            span(class = "sep", "on"),
+            HTML(sprintf('<span class="key-pill">%s</span>', pairs$key[i])))
+      })
+      div(class = "se-joinmap",
+          div(class = "se-joinmap-title",
+              sprintf("Join map · %d relationship%s",
+                      nrow(pairs), if (nrow(pairs) == 1) "" else "s")),
+          jrows)
+    } else {
+      div(class = "se-joinmap",
+          div(class = "se-joinmap-title", "Join map"),
+          p(style = "color:#8BA3B5;font-size:0.88rem;margin:0;",
+            "No shared key fields detected between tables in this schema."))
+    }
+
+    # ── Per-table column listing ──────────────────────────────────────────────
+    table_blocks <- lapply(tbls, function(t) {
+      cols <- all_cols[[t]]
+      n    <- if (is.null(cols)) 0L else nrow(cols)
+
+      col_rows <- if (n == 0) {
+        list(div(class = "se-col",
+                 span(style = "color:#8BA3B5;", "no columns")))
+      } else {
+        lapply(seq_len(n), function(i) {
+          cn       <- cols$column_name[i]
+          is_key   <- cn %in% common
+          nullable <- "is_nullable" %in% names(cols) &&
+                      identical(toupper(cols$is_nullable[i]), "YES")
+          div(class = paste("se-col", if (is_key) "se-key" else ""),
+              span(class = "col-name", cn),
+              if (is_key) span(class = "key-pill", "key"),
+              HTML(type_pill_html(cols$data_type[i])),
+              if (nullable) span(class = "se-nullable", "nullable"))
+        })
+      }
+
+      tagList(
+        div(class = "se-table",
+            t,
+            span(style = "color:#8BA3B5;font-weight:400;",
+                 sprintf("  ·  %d column%s", n, if (n == 1) "" else "s"))),
+        col_rows
+      )
+    })
+
+    div(
+      div(class = "se-schema",
+          sprintf('"%s"  ·  %d table%s', sch, length(tbls),
+                  if (length(tbls) == 1) "" else "s")),
+      joinmap,
+      do.call(tagList, table_blocks)
+    )
+  })
 
 # ── OMOP TOOLS ────────────────────────────────────────────────────────────────
 
